@@ -31,14 +31,6 @@ namespace eosio { namespace chain {
       _read_only_mode = _read_only;
    }
 
-   database_manager::~database_manager()
-   {
-      if (_is_saving_catalog) {
-         shard_db_catalog::save(*this);
-         _is_saving_catalog = false;
-      }
-   }
-
    void database_manager::undo()
    {
       if ( _read_only_mode )
@@ -149,7 +141,12 @@ namespace eosio { namespace chain {
       return nullptr;
    }
 
-   void shard_db_catalog::save(database_manager& dbm) {
+   sdb_catalog_writer::sdb_catalog_writer(database_manager& dbm)
+   :dbm(dbm)
+   {
+   }
+
+   void sdb_catalog_writer::write() {
       auto catalog_dat = dbm.dir / config::shard_db_catalog_filename;
 
       // TODO: backup the existed file?
@@ -183,21 +180,23 @@ namespace eosio { namespace chain {
       // TODO: calc and pack check sum
    }
 
-   shard_db_catalog shard_db_catalog::load(const fc::path& dir) {
+   shard_db_catalog_ptr sdb_catalog_reader::read(const fc::path& dir) {
 
-      shard_db_catalog catalog;
+      // shard_db_catalog catalog;
 
       if (!fc::is_directory(dir))
          fc::create_directories(dir);
 
-      auto catalog_dat = dir / config::shard_db_catalog_filename;
-      if( !fc::exists( catalog_dat ) ) {
-         return catalog;
+      auto catalog_path = dir / config::shard_db_catalog_filename;
+      if( !fc::exists( catalog_path ) ) {
+         return nullptr;
       }
+
+      shard_db_catalog_ptr catalog = std::make_shared<shard_db_catalog>();
 
       try {
          string content;
-         fc::read_file_contents( catalog_dat, content );
+         fc::read_file_contents( catalog_path, content );
 
          fc::datastream<const char*> ds( content.data(), content.size() );
 
@@ -206,7 +205,7 @@ namespace eosio { namespace chain {
          fc::raw::unpack( ds, totem );
          EOS_ASSERT( totem == shard_db_catalog::magic_number, shard_db_catalog_exception,
                      "Shard db catalog file '${filename}' has unexpected magic number: ${actual_totem}. Expected ${expected_totem}",
-                     ("filename", catalog_dat.generic_string())
+                     ("filename", catalog_path.generic_string())
                      ("actual_totem", totem)
                      ("expected_totem", shard_db_catalog::magic_number)
          );
@@ -218,24 +217,24 @@ namespace eosio { namespace chain {
                      shard_db_catalog_exception,
                      "Unsupported version of shard db catalog file '${filename}'. "
                      "Shard db catalog version is ${version} while code supports version(s) [${min},${max}]",
-                     ("filename", catalog_dat.generic_string())
+                     ("filename", catalog_path.generic_string())
                      ("version", version)
                      ("min", shard_db_catalog::min_supported_version)
                      ("max", shard_db_catalog::max_supported_version)
          );
 
 
-         fc::raw::unpack( ds, catalog.shards );
-         fc::raw::unpack( ds, catalog.error_msg );
+         fc::raw::unpack( ds, catalog->shards );
+         fc::raw::unpack( ds, catalog->error_msg );
 
-         if (!catalog.error_msg.empty()) {
+         if (!catalog->error_msg.empty()) {
             EOS_ASSERT( totem == shard_db_catalog::magic_number, shard_db_catalog_exception,
                         "Shard db catalog file ${filename} has been broken before saving, error_msg: ${e}",
-                        ("filename", catalog_dat.generic_string())
-                        ("e", catalog.error_msg)
+                        ("filename", catalog_path.generic_string())
+                        ("e", catalog->error_msg)
             );
          }
-      } FC_CAPTURE_AND_RETHROW( (catalog_dat) )
+      } FC_CAPTURE_AND_RETHROW( (catalog_path) )
 
       return catalog;
    }

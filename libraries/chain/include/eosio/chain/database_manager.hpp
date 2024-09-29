@@ -21,7 +21,6 @@ namespace eosio{ namespace chain {
                   uint64_t shared_file_size = 0, uint64_t main_file_size = 0,
                   bool allow_dirty = false,
                   pinnable_mapped_file::map_mode = pinnable_mapped_file::map_mode::mapped);
-         ~database_manager();
          database_manager(database_manager&&) = default;
          database_manager& operator=(database_manager&&) = default;
          bool is_read_only() const { return _read_only; }
@@ -143,10 +142,6 @@ namespace eosio{ namespace chain {
             }
          }
 
-         void enable_saving_catalog() {
-            _is_saving_catalog = true;
-         }
-
       public:
          path                             dir;
          open_flags                       flags;
@@ -171,24 +166,34 @@ namespace eosio{ namespace chain {
          bool                             _is_saving_catalog   = false;
    };
 
-   // struct shard_db_info {
-
-
-   // };
-
-
-
    struct shard_db_catalog {
       static const uint32_t magic_number;
       static const uint32_t min_supported_version;
       static const uint32_t max_supported_version;
 
-      std::vector<shard_name> shards;
+      block_id_type           head_block;
+      std::set<shard_name> shards;
       std::string error_msg;
 
-      static void save(database_manager& dbm);
-      static shard_db_catalog load(const fc::path& dir);
    };
+
+   using shard_db_catalog_ptr = std::shared_ptr<shard_db_catalog>;
+
+   struct sdb_catalog_reader {
+
+      // static void save(database_manager& dbm);
+      static shard_db_catalog_ptr read(const fc::path& dir);
+   };
+
+   struct sdb_catalog_writer {
+      sdb_catalog_writer(database_manager& dbm);
+
+      void write();
+
+      database_manager& dbm;
+   };
+
+   using sdb_catalog_writer_ptr = std::shared_ptr<sdb_catalog_writer>;
 
 }}  // namepsace chainbase
 
