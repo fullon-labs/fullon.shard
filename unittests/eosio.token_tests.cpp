@@ -54,7 +54,7 @@ public:
    {
       auto symb = eosio::chain::symbol::from_string(symbolname);
       auto symbol_code = symb.to_symbol_code().value;
-      vector<char> data = get_row_by_account( "eosio.token"_n, name(symbol_code), "stat"_n, name(symbol_code) );
+      vector<char> data = get_shared_row_by_account( "eosio.token"_n, name(symbol_code), "stat"_n, name(symbol_code) );
       return data.empty() ? fc::variant() : abi_ser.binary_to_variant( "currency_stats", data, abi_serializer::create_yield_function( abi_serializer_max_time ) );
    }
 
