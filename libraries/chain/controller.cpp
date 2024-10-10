@@ -2480,7 +2480,8 @@ struct controller_impl {
                s.owner           = itr->owner;
                s.shard_type      = itr->shard_type;
                s.enabled         = itr->enabled;
-               s.creation_date   = pbhs.timestamp;
+               s.created_time    = pbhs.timestamp;
+               s.updated_time    = pbhs.timestamp;
             });
             add_shard_db(itr->name);
          } else {
@@ -2489,6 +2490,7 @@ struct controller_impl {
             dbm.main_db().modify( *sp, [&]( auto& s ) {
                s.owner           = itr->owner;
                s.enabled         = itr->enabled;
+               s.updated_time    = pbhs.timestamp;
             });
             // TODO: check shard db exists?
          }
