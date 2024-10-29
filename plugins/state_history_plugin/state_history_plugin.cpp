@@ -114,6 +114,7 @@ struct state_history_plugin_impl : std::enable_shared_from_this<state_history_pl
 
    std::optional<state_history_log>& get_trace_log() { return trace_log; }
    std::optional<state_history_log>& get_chain_state_log(){ return chain_state_log; }
+   std::map<shard_name, state_history_log>& get_shard_state_logs(){ return shard_state_logs; }
 
    boost::asio::io_context& get_ship_executor() { return thread_pool.get_executor(); }
 

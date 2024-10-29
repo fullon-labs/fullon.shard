@@ -74,6 +74,15 @@ fc::datastream<ST>& operator>>(fc::datastream<ST>& ds, eosio::state_history::get
    unpack_big_bytes(ds, obj.block);
    unpack_big_bytes(ds, obj.traces);
    unpack_big_bytes(ds, obj.deltas);
+   uint64_t shard_count;
+   unpack_varuint64(ds, shard_count);
+   for (size_t i = 0; i < shard_count; i++) {
+      chain::shard_name n;
+      fc::raw::unpack(ds, n);
+      auto new_shard = obj.shard_deltas.emplace(std::make_pair(n, bytes{}) );
+      fc::raw::unpack(ds, new_shard.first->second);
+   }
+
    return ds;
 }
 } // namespace eosio::state_history
@@ -89,6 +98,8 @@ fc::sha256 block_id_for(const uint32_t bnum) {
 // Report a failure
 void fail(beast::error_code ec, char const* what) { std::cerr << what << ": " << ec.message() << "\n"; }
 
+using shard_name = eosio::chain::shard_name;
+using state_history_log = eosio::state_history_log;
 struct mock_state_history_plugin {
    net::io_context                         main_ioc;
    net::io_context                         ship_ioc;
@@ -99,6 +110,7 @@ struct mock_state_history_plugin {
    eosio::state_history::block_position    block_head;
    fc::temp_directory                      log_dir;
    std::optional<eosio::state_history_log> log;
+   std::map<shard_name, state_history_log> shard_state_logs;
    std::atomic<bool>                       stopping = false;
    eosio::session_manager                  session_mgr;
 
@@ -106,6 +118,7 @@ struct mock_state_history_plugin {
 
    std::optional<eosio::state_history_log>& get_trace_log() { return log; }
    std::optional<eosio::state_history_log>& get_chain_state_log() { return log; }
+   std::map<shard_name, state_history_log>& get_shard_state_logs(){ return shard_state_logs; }
    fc::sha256                get_chain_id() const { return {}; }
 
    boost::asio::io_context& get_ship_executor() { return ship_ioc; }

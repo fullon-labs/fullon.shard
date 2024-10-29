@@ -30,12 +30,28 @@ extern const char* const state_history_plugin_abi = R"({
                 { "name": "irreversible_only", "type": "bool" },
                 { "name": "fetch_block", "type": "bool" },
                 { "name": "fetch_traces", "type": "bool" },
-                { "name": "fetch_deltas", "type": "bool" }
+                { "name": "fetch_deltas", "type": "bool" },
+                { "name": "fetch_all_shards", "type": "bool" }
+                { "name": "fetch_shards", "type": "name[]" }
             ]
         },
         {
             "name": "get_blocks_ack_request_v0", "fields": [
                 { "name": "num_messages", "type": "uint32" }
+            ]
+        },
+        {
+            "name": "pair_name_bytes",
+            "base": "",
+            "fields": [
+                {
+                    "name": "key",
+                    "type": "name"
+                },
+                {
+                    "name": "value",
+                    "type": "bytes"
+                }
             ]
         },
         {
@@ -46,7 +62,8 @@ extern const char* const state_history_plugin_abi = R"({
                 { "name": "prev_block", "type": "block_position?" },
                 { "name": "block", "type": "bytes?" },
                 { "name": "traces", "type": "bytes?" },
-                { "name": "deltas", "type": "bytes?" }
+                { "name": "deltas", "type": "bytes?" },
+                { "name": "shard_deltas", "type": "pair_name_bytes[]?" }
             ]
         },
         {

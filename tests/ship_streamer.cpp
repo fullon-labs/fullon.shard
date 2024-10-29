@@ -106,6 +106,8 @@ int main(int argc, char* argv[]) {
          request_writer.Bool(fetch_traces);
          request_writer.Key("fetch_deltas");
          request_writer.Bool(fetch_deltas);
+         request_writer.Key("fetch_deltas");
+         request_writer.Bool(fetch_deltas);
          request_writer.EndObject();
       request_writer.EndArray();
 
