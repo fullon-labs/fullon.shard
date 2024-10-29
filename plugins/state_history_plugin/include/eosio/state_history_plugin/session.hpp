@@ -250,6 +250,26 @@ class blocks_result_send_queue_entry : public send_queue_entry_base, public std:
                 });
    }
 
+
+   template <typename Next>
+   void send_shard_log(const chain::shard_name& name, uint64_t shard_size, bool is_end, Next&& next) {
+      data.resize(24); // should be at least for 8 byte (optional) + 10 bytes (variable sized uint64_t)
+      fc::datastream<char*> ds(data.data(), data.size());
+      fc::raw::pack(ds, name); // optional true
+      history_pack_varuint64(ds, shard_size);
+      data.resize(ds.tellp());
+
+      async_send(is_end && shard_size == 0, data,
+                [is_end, shard_size, next = std::forward<Next>(next), me=this->shared_from_this()]() mutable {
+                   if (shard_size) {
+                      me->async_send_buf(is_end, [me, next = std::move(next)]() {
+                         next();
+                      });
+                   } else
+                      next();
+                });
+   }
+
    void send_deltas() {
       stream.reset();
       send_log(session->get_delta_log_entry(r, stream), true, [me=this->shared_from_this()]() {
@@ -263,6 +283,48 @@ class blocks_result_send_queue_entry : public send_queue_entry_base, public std:
       send_log(session->get_trace_log_entry(r, stream), false, [me=this->shared_from_this()]() {
          me->send_deltas();
       });
+   }
+
+   void send_shards() {
+
+      stream.reset();
+
+      auto& logs = session->sending_shard_state_logs;
+      data.resize(16); // should be at least for 10 bytes (variable sized uint64_t)
+      fc::datastream<char*> ds(data.data(), data.size());
+      history_pack_varuint64(ds, logs.size());
+      data.resize(ds.tellp());
+
+      async_send(logs.size() == 0, data, [&logs, me=this->shared_from_this()]() mutable {
+         if (logs.size() != 0) {
+            me->send_shard_deltas(logs, logs.begin());
+         } else {
+            me->end_sending();
+         }
+      });
+
+   }
+
+   template<typename Logs, typename Iterator>
+   void send_shard_deltas(Logs& logs, Iterator itr) {
+
+      if (itr == logs.end()) {
+         end_sending();
+         return;
+      }
+
+      stream.reset();
+      auto next_itr = itr + 1;
+      auto entry_size = session->get_delta_log_entry(r, stream, itr->second);
+      send_shard_log( itr->first, entry_size, next_itr == logs.end(),
+         [me=this->shared_from_this(), &logs, next_itr]() {
+            me->send_shard_deltas(logs, next_itr);
+      });
+   }
+
+   void end_sending() {
+      stream.reset();
+      session->session_mgr.pop_entry();
    }
 
 public:
@@ -296,6 +358,8 @@ private:
 
    uint32_t               to_send_block_num = 0;
    std::optional<std::vector<state_history::block_position>::const_iterator> position_it;
+   uint32_t                                           last_checking_shard_count = 0;
+   std::map<chain::shard_name, state_history_log&>    sending_shard_state_logs;
 
    const int32_t          default_frame_size;
 
@@ -383,6 +447,26 @@ private:
    }
 
    uint64_t get_delta_log_entry(const eosio::state_history::get_blocks_result_v0& result,
+                                std::optional<locked_decompress_stream>& buf) {
+      if (result.deltas.has_value()) {
+         auto& optional_log = plugin->get_chain_state_log();
+         if( optional_log ) {
+            buf.emplace( optional_log->create_locked_decompress_stream() );
+            return optional_log->get_unpacked_entry( result.this_block->block_num, *buf );
+         }
+      }
+      return 0;
+   }
+
+
+   uint64_t get_delta_log_entry(const eosio::state_history::get_blocks_result_v0& result,
+                                std::optional<locked_decompress_stream>& buf, state_history_log &log) {
+
+      buf.emplace( log.create_locked_decompress_stream() );
+      return log.get_unpacked_entry( result.this_block->block_num, *buf );
+   }
+
+   uint64_t get_shards_delta_log_entry(const eosio::state_history::get_blocks_result_v0& result,
                                 std::optional<locked_decompress_stream>& buf) {
       if (result.deltas.has_value()) {
          auto& optional_log = plugin->get_chain_state_log();
@@ -524,6 +608,21 @@ private:
             result.traces.emplace();
          if (current_request->fetch_deltas && plugin->get_chain_state_log())
             result.deltas.emplace();
+
+         if (current_request->fetch_deltas) {
+            auto& logs = plugin->get_shard_state_logs();
+            if (logs.size() != last_checking_shard_count) {
+               for (auto& log : logs) {
+                  if (current_request->fetch_all_shards || current_request->fetch_shards.count(log.first)) {
+                     if (!sending_shard_state_logs.count(log.first)) {
+                        sending_shard_state_logs.emplace(std::piecewise_construct,
+                              std::forward_as_tuple(log.first),
+                              std::forward_as_tuple(log.second));
+                     }
+                  }
+               }
+            }
+         }
       }
       ++to_send_block_num;
 

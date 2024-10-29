@@ -777,6 +777,12 @@ datastream<ST>& operator<<(datastream<ST>& ds, const eosio::state_history::get_b
    history_pack_big_bytes(ds, obj.block);
    history_pack_big_bytes(ds, obj.traces);
    history_pack_big_bytes(ds, obj.deltas);
+   // history_pack_big_bytes(ds, obj.shard_deltas);
+   history_pack_varuint64(ds, obj.shard_deltas.size());
+   for (const auto& sp : obj.shard_deltas) {
+      fc::raw::pack(ds, sp.first);
+      history_pack_big_bytes(ds, sp.second);
+   }
    return ds;
 }
 

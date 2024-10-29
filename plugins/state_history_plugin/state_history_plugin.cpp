@@ -9,6 +9,7 @@
 #include <eosio/state_history/trace_converter.hpp>
 #include <eosio/state_history_plugin/state_history_plugin.hpp>
 #include <eosio/state_history_plugin/session.hpp>
+#include <eosio/chain/shard_object.hpp>
 
 #include <boost/asio/bind_executor.hpp>
 #include <boost/asio/ip/host_name.hpp>
@@ -64,8 +65,14 @@ auto catch_and_log(F f) {
 
 struct state_history_plugin_impl : std::enable_shared_from_this<state_history_plugin_impl> {
    chain_plugin*                    chain_plug = nullptr;
+   boost::filesystem::path          state_history_dir;
+   boost::filesystem::path          shard_state_log_dir;
+   state_history_log_config         ship_log_conf;
    std::optional<state_history_log> trace_log;
    std::optional<state_history_log> chain_state_log;
+   std::map<shard_name, state_history_log> shard_state_logs;
+   block_timestamp_type             last_shard_updated_time;
+   shard_id_type                    last_shard_id;
    uint32_t                         first_available_block = 0;
    bool                             trace_debug_mode = false;
    std::optional<scoped_connection> applied_transaction_connection;
@@ -107,6 +114,7 @@ struct state_history_plugin_impl : std::enable_shared_from_this<state_history_pl
 
    std::optional<state_history_log>& get_trace_log() { return trace_log; }
    std::optional<state_history_log>& get_chain_state_log(){ return chain_state_log; }
+   std::map<shard_name, state_history_log>& get_shard_state_logs(){ return shard_state_logs; }
 
    boost::asio::io_context& get_ship_executor() { return thread_pool.get_executor(); }
 
@@ -359,6 +367,34 @@ struct state_history_plugin_impl : std::enable_shared_from_this<state_history_pl
       chain_state_log->pack_and_write_entry(header, block_state->header.previous, [this, fresh](auto&& buf) {
          pack_deltas(buf, chain_plug->chain().db(), fresh);
       });
+
+      const auto& sc_indx = chain_plug->chain().dbm().main_db().get_index<shard_index, by_updated_time>();
+      auto itr = sc_indx.lower_bound(boost::make_tuple(last_shard_updated_time, last_shard_id));
+      for (  ; itr != sc_indx.end(); itr++ ) {
+         last_shard_updated_time = itr->updated_time;
+         last_shard_id = itr->id;
+
+         // TODO: checking shard is enabled in config
+         if (!itr->enabled) {
+            continue;
+         }
+         auto db = chain_plug->chain().dbm().find_shard_db(itr->name);
+         if (db) {
+            std::string name = itr->name.to_string();
+            auto dir = shard_state_log_dir / itr->name.to_string();
+            shard_state_logs.emplace(std::piecewise_construct,
+                                       std::forward_as_tuple( itr->name ),
+                                       std::forward_as_tuple( name.c_str(), dir, ship_log_conf ));
+         } else {
+            fc_elog(_log, "Shard ${shard} is available but shard db not found", ("shard", itr->name));
+         }
+      }
+      for (auto& log : shard_state_logs) {
+         bool shard_fresh = log.second.empty();
+         log.second.pack_and_write_entry(header, block_state->header.previous, [this, shard_fresh](auto&& buf) {
+            pack_deltas(buf, chain_plug->chain().db(), shard_fresh);
+         });
+      }
    } // store_chain_state
 
    ~state_history_plugin_impl() {
@@ -436,11 +472,16 @@ void state_history_plugin::plugin_initialize(const variables_map& options) {
           chain.block_start.connect([&](uint32_t block_num) { my->on_block_start(block_num); }));
 
       auto                    dir_option = options.at("state-history-dir").as<bfs::path>();
-      boost::filesystem::path state_history_dir;
+
+      auto& state_history_dir = my->state_history_dir;
+
       if (dir_option.is_relative())
          state_history_dir = app().data_dir() / dir_option;
       else
          state_history_dir = dir_option;
+
+      my->shard_state_log_dir = state_history_dir / "shards";
+
       if (auto resmon_plugin = app().find_plugin<resource_monitor_plugin>())
          resmon_plugin->monitor_directory(state_history_dir);
 
@@ -477,7 +518,7 @@ void state_history_plugin::plugin_initialize(const variables_map& options) {
           options.count("state-history-retained-dir") || options.count("state-history-archive-dir") ||
           options.count("state-history-stride") || options.count("max-retained-history-files");
 
-      state_history_log_config ship_log_conf;
+      state_history_log_config& ship_log_conf = my->ship_log_conf;
       if (options.count("state-history-log-retain-blocks")) {
          auto& ship_log_prune_conf = ship_log_conf.emplace<state_history::prune_config>();
          ship_log_prune_conf.prune_blocks = options.at("state-history-log-retain-blocks").as<uint32_t>();

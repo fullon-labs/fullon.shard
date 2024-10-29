@@ -1064,15 +1064,22 @@ namespace eosio { namespace testing {
 
 
    vector<char> base_tester::get_row_by_account( name code, name scope, name table, const account_name& act ) const {
+      return get_row_by_account(control->dbm().main_db(), code, scope, table, act);
+   }
+
+   template<typename T>
+   static vector<char> _get_row_by_account( const database& db, name code, name scope, name table, const account_name& act ) {
+      using table_id_object = typename T::table_id_object;
+      using key_value_object = typename T::key_value_object;
+      using key_value_index = typename chainbase::get_index_type<key_value_object>::type;
       vector<char> data;
-      const auto& db = control->db();
-      const auto* t_id = db.find<chain::table_id_object, chain::by_code_scope_table>( boost::make_tuple( code, scope, table ) );
+      const auto* t_id = db.find<table_id_object, chain::by_code_scope_table>( boost::make_tuple( code, scope, table ) );
       if ( !t_id ) {
          return data;
       }
       //FC_ASSERT( t_id != 0, "object not found" );
 
-      const auto& idx = db.get_index<chain::key_value_index, chain::by_scope_primary>();
+      const auto& idx = db.get_index<key_value_index, chain::by_scope_primary>();
 
       auto itr = idx.lower_bound( boost::make_tuple( t_id->id, act.to_uint64_t() ) );
       if ( itr == idx.end() || itr->t_id != t_id->id || act.to_uint64_t() != itr->primary_key ) {
@@ -1084,6 +1091,13 @@ namespace eosio { namespace testing {
       return data;
    }
 
+   vector<char> base_tester::get_row_by_account( const database& db, name code, name scope, name table, const account_name& act ) const {
+      return _get_row_by_account<chain::contract_tables>(db, code, scope, table, act);
+   }
+
+   vector<char> base_tester::get_shared_row_by_account( name code, name scope, name table, const account_name& act ) const {
+      return _get_row_by_account<chain::contract_shared_tables>(control->dbm().main_db(), code, scope, table, act);
+   }
 
    vector<uint8_t> base_tester::to_uint8_vector(const string& s) {
       vector<uint8_t> v(s.size());

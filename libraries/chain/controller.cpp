@@ -356,6 +356,7 @@ struct controller_impl {
    controller&                     self;
    std::function<void()>           shutdown;
    database_manager                dbm;
+   chain::sdb_catalog_writer_ptr   sdb_catalog_writer;
    block_log                       blog;
    std::optional<pending_state>    pending;
    block_state_ptr                 head;
@@ -916,6 +917,11 @@ struct controller_impl {
       //only log this not just if configured to, but also if initialization made it to the point we'd log the startup too
       if(okay_to_print_integrity_hash_on_stop && conf.integrity_hash_on_stop)
          ilog( "chain database stopped with hash: ${hash}", ("hash", calculate_integrity_hash()) );
+
+      if (sdb_catalog_writer) {
+         sdb_catalog_writer->write();
+         sdb_catalog_writer.reset();
+      }
    }
 
    void init_db() {
@@ -930,13 +936,55 @@ struct controller_impl {
       authorization_manager::add_indices(main_db); // only in main_db and shared_db
       add_indices_to_shard_db(main_db);
 
-      auto catalog = shard_db_catalog::load(conf.state_dir);
-      for (const auto& shard : catalog.shards) {
-         add_shard_db(shard);
-         // TODO: validate shard dbs?
+      // init shard dbs
+      const auto& sc_indx = dbm.main_db().get_index<shard_index, by_id>();
+      auto catalog = sdb_catalog_reader::read(conf.state_dir);
+      std::set<shard_name> available_shards;
+      for ( auto itr = sc_indx.begin(); itr != sc_indx.end(); itr++ ) {
+         // TODO: is enable shard in config??
+         if (itr->enabled) {
+            available_shards.emplace(itr->name);
+            // EOS_ASSERT( catalog->shards.count(itr->name), shard_db_catalog_exception,
+            //             "available shard ${shard} does not exist in shard db catalog",
+            //             ("shard", itr->name) );
+            // available_shards.emplace(itr->name);
+         }
       }
 
-      dbm.enable_saving_catalog(); // TODO: Is it appropriate to call here
+      bool catalog_empty = !catalog || catalog->shards.empty();
+      if (catalog_empty && available_shards.empty()) {
+         return;
+      } else if (catalog_empty) {
+         EOS_THROW( shard_db_catalog_exception,
+                     "catalog shards are empty but available shards are not empty", ("available_shards", available_shards));
+      } else if (available_shards.empty()) {
+         EOS_THROW( shard_db_catalog_exception,
+                     "catalog shards are not empty but available shards are empty", ("available_shards", catalog->shards));
+      } else { // !catalog_empty && !available_shards.empty()
+         std::vector<shard_name> diff;
+         diff.reserve(available_shards.size() + catalog->shards.size());
+
+         std::set_difference(catalog->shards.begin(), catalog->shards.end(),
+                              available_shards.begin(), available_shards.end(),
+                              std::inserter(diff, diff.begin()));
+         EOS_ASSERT( diff.empty(), shard_db_catalog_exception,
+                     "some catalog shards are not found available shards", ("diff_shards", diff) );
+
+         std::set_difference(available_shards.begin(), available_shards.end(),
+                              catalog->shards.begin(), catalog->shards.end(),
+                              std::inserter(diff, diff.begin()));
+         EOS_ASSERT( diff.empty(), shard_db_catalog_exception,
+                     "some available shards are not found catalog shards", ("diff_shards", diff) );
+
+         for (const auto& shard : catalog->shards) {
+            auto& sdb = add_shard_db(shard);
+            EOS_ASSERT( sdb.revision() == main_db.revision(), shard_db_exception,
+                        "shard($shard) db revision(sv) mismatch with main db revision(mv)",
+                        ("shard", shard)("sr", sdb.revision())("mr", main_db.revision()) );
+         }
+      }
+
+      sdb_catalog_writer = std::make_shared<eosio::chain::sdb_catalog_writer>(dbm);
    }
 
    // TODO: rename to init_db?
@@ -2432,7 +2480,8 @@ struct controller_impl {
                s.owner           = itr->owner;
                s.shard_type      = itr->shard_type;
                s.enabled         = itr->enabled;
-               s.creation_date   = pbhs.timestamp;
+               s.created_time    = pbhs.timestamp;
+               s.updated_time    = pbhs.timestamp;
             });
             add_shard_db(itr->name);
          } else {
@@ -2441,6 +2490,7 @@ struct controller_impl {
             dbm.main_db().modify( *sp, [&]( auto& s ) {
                s.owner           = itr->owner;
                s.enabled         = itr->enabled;
+               s.updated_time    = pbhs.timestamp;
             });
             // TODO: check shard db exists?
          }

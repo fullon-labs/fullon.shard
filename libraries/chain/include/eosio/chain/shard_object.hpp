@@ -5,6 +5,9 @@
 #include <eosio/chain/abi_def.hpp>
 #include <eosio/chain/transaction.hpp>
 
+#include <boost/multi_index/hashed_index.hpp>
+#include <boost/multi_index/mem_fun.hpp>
+
 #include "multi_index_includes.hpp"
 
 namespace eosio { namespace chain {
@@ -19,16 +22,18 @@ namespace eosio { namespace chain {
       account_name            owner;
       bool                    enabled        = false;
       uint8_t                 opts           = 0; ///< options
-      block_timestamp_type creation_date;
+      block_timestamp_type    created_time;
+      block_timestamp_type    updated_time;
 
       shard_object& operator=(const shard_object& a) {
          id             = a.id;
          name           = a.name;
-         version           = a.version;
+         version        = a.version;
          shard_type     = a.shard_type;
-         owner           = a.owner;
+         owner          = a.owner;
          enabled        = a.enabled;
-         creation_date  = a.creation_date;
+         created_time   = a.created_time;
+         updated_time   = a.updated_time;
          return *this;
       }
    };
@@ -41,15 +46,23 @@ namespace eosio { namespace chain {
    //    id_type              id;
    //    name                 permmited_account;
    //    shard_name           name;
-   //    block_timestamp_type creation_date;
+   //    block_timestamp_type created_time;
    // };
 
    struct by_name;
+   struct by_updated_time;
+
    using shard_index = chainbase::shared_multi_index_container<
       shard_object,
       indexed_by<
          ordered_unique<tag<by_id>, member<shard_object, shard_object::id_type, &shard_object::id>>,
-         ordered_unique<tag<by_name>, member<shard_object, shard_name, &shard_object::name>>
+         ordered_unique<tag<by_name>, member<shard_object, shard_name, &shard_object::name>>,
+         ordered_unique<tag<by_updated_time>,
+            composite_key< shard_object,
+               BOOST_MULTI_INDEX_MEMBER( shard_object, block_timestamp_type, updated_time ),
+               BOOST_MULTI_INDEX_MEMBER( shard_object, shard_object::id_type, id)
+            >
+         >
       >
    >;
 
@@ -111,7 +124,7 @@ namespace eosio { namespace chain {
 CHAINBASE_SET_INDEX_TYPE(eosio::chain::shard_object, eosio::chain::shard_index)
 CHAINBASE_SET_INDEX_TYPE(eosio::chain::shard_change_object, eosio::chain::shard_change_index)
 
-FC_REFLECT(eosio::chain::shard_object, (name)(version)(shard_type)(owner)(enabled)(opts)(creation_date))
+FC_REFLECT(eosio::chain::shard_object, (name)(version)(shard_type)(owner)(enabled)(opts)(created_time)(updated_time))
 FC_REFLECT(eosio::chain::shard_change_object, (name)(version)(shard_type)(owner)(enabled)(opts)(block_num))
 FC_REFLECT(eosio::chain::registered_shard, (name)(shard_type)(owner)(enabled)(opts))
 
